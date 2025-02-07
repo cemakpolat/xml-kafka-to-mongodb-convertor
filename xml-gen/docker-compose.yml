@@ -1,0 +1,12 @@
+
+services:
+  xml_generator:
+    build: ./xml-gen/
+    container_name: xml_generator
+    ports:
+      - "5001:5000"  # Map the configurable port
+    volumes:
+      - ./data:/data  # Mount a local folder to persist data
+    environment:
+      - NUM_FILES=5          # Set number of files to generate
+      - TIME_INTERVAL_IN_SEC=10 # Set the time interfal for the file generation

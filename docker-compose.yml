@@ -1,0 +1,145 @@
+version: '3'
+services:
+  kafka-ui:
+    container_name: kafka-ui
+    image: provectuslabs/kafka-ui:latest
+    ports:
+      - 8080:8080
+    networks:
+      - kafka-network
+    depends_on:
+      - cp-kafka
+    environment:
+      KAFKA_CLUSTERS_0_NAME: cluster-01
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: cp-kafka:29092
+      KAFKA_CLUSTERS_0_METRICS_PORT: 9997
+      KAFKA_CLUSTERS_0_KAFKACONNECT_0_NAME: connect-01
+      KAFKA_CLUSTERS_0_KAFKACONNECT_0_ADDRESS: http://connect-file-pulse:8083
+      DYNAMIC_CONFIG_ENABLED: 'true'
+  cp-zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    hostname: zookeeper
+    container_name: zookeeper
+    ports:
+    - "2181:2181"
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    networks:
+      - kafka-network
+
+  cp-kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    hostname: kafka
+    container_name: kafka
+    depends_on:
+    - cp-zookeeper
+    ports:
+    - "29092:29092"
+    - "9092:9092"
+    - "9997:9997"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: 'cp-zookeeper:2181'
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://cp-kafka:29092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      CONFLUENT_METRICS_REPORTER_BOOTSTRAP_SERVERS: cp-kafka:29092
+      CONFLUENT_METRICS_REPORTER_ZOOKEEPER_CONNECT: cp-zookeeper:2181
+      CONFLUENT_METRICS_REPORTER_TOPIC_REPLICAS: 1
+      CONFLUENT_METRICS_ENABLE: 'false'
+      KAFKA_JMX_PORT: 9997
+      KAFKA_MESSAGE_MAX_BYTES: 10000000
+      KAFKA_SOCKET_REQUEST_MAX_BYTES: 100001200
+      KAFKA_JMX_OPTS: -Dcom.sun.management.jmxremote -Dcom.sun.management.jmxremote.authenticate=false -Dcom.sun.management.jmxremote.ssl=false -Djava.rmi.server.hostname=kafka0 -Dcom.sun.management.jmxremote.rmi.port=9997
+    networks:
+      - kafka-network
+
+  cp-schema-registry:
+    image: confluentinc/cp-schema-registry:7.5.0
+    hostname: schema-registry
+    container_name: schema-registry
+    depends_on:
+    - cp-kafka
+    ports:
+    - "8081:8081"
+    environment:
+      SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: PLAINTEXT://cp-kafka:29092
+      SCHEMA_REGISTRY_HOST_NAME: schema-registry
+    networks:
+      - kafka-network
+
+  connect-file-pulse:
+    image: streamthoughts/kafka-connect-file-pulse:2.13.0
+    container_name: connect
+    depends_on:
+    - cp-kafka
+    ports:
+    - "8083:8083"
+    - "8000:8000"
+    environment:
+      CONNECT_BOOTSTRAP_SERVERS: 'kafka:29092'
+      CONNECT_REST_ADVERTISED_HOST_NAME: connect
+      CONNECT_REST_PORT: 8083
+      CONNECT_GROUP_ID: compose-connect-group
+      CONNECT_CONFIG_STORAGE_TOPIC: docker-connect-configs
+      CONNECT_CONFIG_STORAGE_REPLICATION_FACTOR: 1
+      CONNECT_OFFSET_FLUSH_INTERVAL_MS: 10000
+      CONNECT_OFFSET_STORAGE_TOPIC: docker-connect-offsets
+      CONNECT_OFFSET_STORAGE_REPLICATION_FACTOR: 1
+      CONNECT_STATUS_STORAGE_TOPIC: docker-connect-status
+      CONNECT_STATUS_STORAGE_REPLICATION_FACTOR: 1
+      #CONNECT_KEY_CONVERTER: org.apache.kafka.connect.storage.JsonConverter
+      CONNECT_VALUE_CONVERTER: org.apache.kafka.connect.json.JsonConverter
+      CONNECT_KEY_CONVERTER: org.apache.kafka.connect.storage.StringConverter
+      #CONNECT_VALUE_CONVERTER: org.apache.kafka.connect.storage.StringConverter
+      #CONNECT_VALUE_CONVERTER: io.confluent.connect.avro.AvroConverter
+      CONNECT_VALUE_CONVERTER_SCHEMA_REGISTRY_URL: http://schema-registry:8081
+      CONNECT_INTERNAL_KEY_CONVERTER: "org.apache.kafka.connect.json.JsonConverter"
+      CONNECT_INTERNAL_VALUE_CONVERTER: "org.apache.kafka.connect.json.JsonConverter"
+      # kafka-connect-file-pulse is installed as a confluent-hub component
+      CONNECT_PLUGIN_PATH: "/usr/share/java,/usr/share/confluent-hub-components/,/etc/kafka-connect/jars"
+      CONNECT_LOG4J_ROOT_LOGLEVEL: "INFO"
+      CONNECT_VALUE_CONVERTER_SCHEMAS_ENABLE: "false" # to not add schema each time in payload 
+      # CONNECT_LOG4J_LOGGERS: io.streamthoughts=DEBUG,org.apache.zookeeper=ERROR,org.I0Itec.zkclient=ERROR,org.reflections=ERROR
+      # Uncomment for debugging the connector during development cycle
+      # KAFKA_OPTS: "-agentlib:jdwp=transport=dt_socket,server=y,address=8000,suspend=n"
+    volumes:
+      - /tmp/kafka-connect:/tmp/kafka-connect
+      - ./data/:/tmp/kafka-connect-data/
+      - ./kafka-connect/jars:/etc/kafka-connect/jars
+    networks:
+      - kafka-network
+  mongodb:
+    # *-----------------------------*
+    # To connect to mongoDB
+    #   docker exec --interactive --tty mongodb mongo localhost:27017
+    # *-----------------------------*
+    image: mongo:4.4.1
+    container_name: mongodb
+    environment:
+      - AUTH=yes
+      - MONGO_INITDB_ROOT_USERNAME=root
+      - MONGO_INITDB_ROOT_PASSWORD=root 
+    volumes:
+      - /data/mongodb-dev:/data/db
+    ports:
+      - "27017:27017"
+    networks:
+      - kafka-connect
+  xml_generator:
+    build: ./xml-gen/
+    container_name: xml_generator
+    ports:
+      - "5001:5000"  # Map the configurable port
+    volumes:
+      - ./data:/data  # Mount a local folder to persist data
+    environment:
+      - NUM_FILES=5          # Set number of files to generate
+      - TIME_INTERVAL_IN_SEC=10 # Set the time interfal for the file generation
+    networks:
+      - kafka-network
+networks:
+  kafka-connect:
+    driver: bridge
